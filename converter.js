@@ -1,4 +1,5 @@
 const sharp = require("sharp");
+const decodeHeic = require("heic-decode");
 const fs = require("fs");
 const path = require("path");
 
@@ -6,7 +7,8 @@ const path = require("path");
 const folder = process.argv[2];
 
 const WEBP_QUALITY = 85;
-const ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png"];
+const HEIC_EXTENSIONS = [".heic", ".heif"];
+const ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ...HEIC_EXTENSIONS];
 
 if (!folder) {
     console.error("Не указан путь к папке.");
@@ -26,6 +28,30 @@ if (!fs.statSync(folder).isDirectory()) {
 function isSupportedImage(filePath) {
     const extension = path.extname(filePath).toLowerCase();
     return ALLOWED_EXTENSIONS.includes(extension);
+}
+
+async function openImage(inputPath, extension) {
+    if (!HEIC_EXTENSIONS.includes(extension)) {
+        return sharp(inputPath);
+    }
+
+    // Готовая Windows-сборка Sharp не декодирует обычный HEIC,
+    // поэтому получаем RGBA-пиксели через отдельный HEIC-декодер.
+    const buffer = await fs.promises.readFile(inputPath);
+    const decoded = await decodeHeic({ buffer });
+    const rawPixels = Buffer.from(
+        decoded.data.buffer,
+        decoded.data.byteOffset,
+        decoded.data.byteLength
+    );
+
+    return sharp(rawPixels, {
+        raw: {
+            width: decoded.width,
+            height: decoded.height,
+            channels: 4
+        }
+    });
 }
 
 function findImagesRecursively(rootFolder) {
@@ -56,7 +82,6 @@ function findImagesRecursively(rootFolder) {
 
 async function convertImage(inputPath) {
     const extension = path.extname(inputPath).toLowerCase();
-    const fileName = path.basename(inputPath);
     const fileNameWithoutExtension = path.basename(inputPath);
     const baseName = fileNameWithoutExtension.slice(0, -extension.length);
     const imageFolder = path.dirname(inputPath);
@@ -76,7 +101,9 @@ async function convertImage(inputPath) {
         }
 
         // Конвертируем с теми же параметрами, что и раньше
-        await sharp(inputPath)
+        const image = await openImage(inputPath, extension);
+
+        await image
             .rotate()
             .webp({
                 quality: WEBP_QUALITY
@@ -150,7 +177,7 @@ async function start() {
     }
 
     if (images.length === 0) {
-        console.log("JPG/JPEG/PNG не найдены в выбранной папке и подпапках.");
+        console.log("JPG/JPEG/PNG/HEIC/HEIF не найдены в выбранной папке и подпапках.");
         return;
     }
 
